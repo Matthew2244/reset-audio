@@ -26,7 +26,11 @@ check() {
 echo "reset-audio checks"
 echo
 
-# --- it is valid Python, on the oldest interpreter we claim to support -----
+# --- it is valid Python -----------------------------------------------------
+# Against whatever python3 you have, which on a stock Mac is the 3.9 the
+# Command Line Tools ship. CI additionally compiles it against 3.9 explicitly,
+# because the runner's python3 is several versions newer and would accept
+# syntax that nobody installing this from a clean Mac can run.
 check "reset-audio compiles"          python3 -m py_compile reset-audio
 
 # --- the read-only entry points work and change nothing -------------------
