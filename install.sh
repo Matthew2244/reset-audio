@@ -75,14 +75,26 @@ if [ "$BUILD_APP" = "1" ]; then
     # swallows the AppleScript error a non-zero exit would otherwise raise:
     # reset-audio has already said what went wrong out loud, and a second
     # dialog saying it again in worse words helps nobody.
-    SRC="$(mktemp -t reset-audio-applet).applescript"
+    TMPD="$(mktemp -d)"
+    SRC="$TMPD/applet.applescript"
     cat > "$SRC" <<EOF
 try
 	do shell script "$BIN_DIR/reset-audio"
 end try
 EOF
-    osacompile -o "$APP" "$SRC"
-    rm -f "$SRC"
+
+    # osacompile ad-hoc signs the applet it produces, and codesign announces
+    # "replacing existing signature" on the way past. That is normal and means
+    # nothing is wrong, but printed unexplained in the middle of an install it
+    # reads like a warning. Hold its output and only show it if it actually
+    # failed.
+    if ! osacompile -o "$APP" "$SRC" >"$TMPD/out" 2>&1; then
+        echo "install.sh: osacompile failed to build the app:" >&2
+        cat "$TMPD/out" >&2
+        rm -rf "$TMPD"
+        exit 1
+    fi
+    rm -rf "$TMPD"
 
     P="$APP/Contents/Info.plist"
     plist_set() { /usr/libexec/PlistBuddy -c "Set :$1 $2" "$P" 2>/dev/null \
