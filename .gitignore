@@ -1,0 +1,9 @@
+.DS_Store
+*.swp
+*~
+__pycache__/
+*.pyc
+
+# Built by install.sh from the AppleScript it generates, so there is no
+# compiled bundle in the repository for anyone to have to trust.
+*.app/

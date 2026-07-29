@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""reset-audio — restart macOS Core Audio, and say out loud whether it worked.
+
+The command itself has never been the hard part:
+
+    sudo killall -9 coreaudiod
+
+The friction is everything around it — find the note you keep it in, select the
+line, copy it, launch Terminal, paste, type an admin password into a shell
+prompt that gives no useful screen reader feedback, then read the scrollback to
+find out whether it actually did anything. Six steps and a context switch to
+run one command that takes half a second.
+
+This collapses that to one. Run `reset-audio`, or launch "Reset Audio" from
+Spotlight or the Dock, and it does the whole thing and *tells you by ear*
+whether Core Audio came back.
+
+How it gets root, in order of preference:
+
+  1. Passwordless sudo, if a /etc/sudoers.d rule allows exactly this command.
+     Nothing to type at all. See `reset-audio --install-help` for the one line
+     that enables it — it is deliberately not installed for you, because that
+     is a change to your machine's security configuration and it is your call,
+     not this script's.
+
+  2. The native macOS authorisation dialog, via AppleScript's `with
+     administrator privileges`. One dialog, a real secure text field, proper
+     VoiceOver support, and Touch ID where the keyboard offers it. No Terminal
+     window, no shell prompt, no echoed password.
+
+Either way the outcome is confirmed rather than assumed: the script waits for
+launchd to respawn coreaudiod, checks it is a genuinely new process (a new
+PID, not the old one still refusing to die), and announces the result through
+VoiceOver — so it is one voice at your configured rate rather than `say`
+talking over the top of it. On a Mac with VoiceOver off it falls back to `say`.
+
+Nothing here touches the network, and nothing is written outside the process.
+"""
+
+import argparse
+import getpass
+import os
+import subprocess
+import sys
+import time
+
+__version__ = "1.0.0"
+
+KILL_CMD = ["/usr/bin/killall", "-9", "coreaudiod"]
+KILL_STR = "/usr/bin/killall -9 coreaudiod"
+
+# launchd normally has coreaudiod back within a second; a busy machine with a
+# lot of HAL plug-ins can take longer, so the default is generous.
+RESPAWN_TIMEOUT = 15.0
+RESPAWN_POLL = 0.25
+
+# Audio software that holds its device open across a Core Audio restart and
+# often needs to be nudged afterwards — usually by reselecting the device in
+# its own preferences. Matched by prefix against the basename of each running
+# process, because most of these carry a version number in the executable name
+# ("Cubase 13", "Adobe Audition 2026"), and the executable name is frequently
+# not the name in the Applications folder. Send a pull request if yours is
+# missing; CONTRIBUTING.md has the one command that tells you what to add.
+#
+# The cost of a wrong entry here is one extra name in a spoken sentence, so
+# short prefixes are worth it even where they are slightly ambiguous.
+AUDIO_APPS = [
+    "REAPER", "Logic Pro", "MainStage", "GarageBand", "Pro Tools", "Live",
+    "Studio One", "Cubase", "Nuendo", "WaveLab", "FL Studio",
+    "Digital Performer", "BitwigStudio", "Ardour", "Mixbus", "LUNA", "Reason",
+    "Audacity", "TwistedWave", "Hindenburg", "Amadeus Pro", "Final Cut Pro",
+    "DaVinci Resolve", "Adobe Audition", "Adobe Premiere Pro", "ScreenFlow",
+    "Camtasia", "OBS", "Descript", "Dorico", "Sibelius",
+]
+
+
+# --------------------------------------------------------------------------
+# talking to the user
+# --------------------------------------------------------------------------
+
+def voiceover_running():
+    try:
+        r = subprocess.run(["pgrep", "-x", "VoiceOver"],
+                           capture_output=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def announce(text, quiet=False, use_say=False):
+    """Say `text` out loud, preferring VoiceOver's own output channel.
+
+    Passing the text as an argv item rather than interpolating it into the
+    AppleScript source keeps quoting out of the picture entirely: a message
+    containing a double quote would otherwise end the string mid-sentence.
+    """
+    print(text)
+    if quiet:
+        return
+    if not use_say and voiceover_running():
+        try:
+            r = subprocess.run(
+                ["osascript",
+                 "-e", "on run argv",
+                 "-e", 'tell application "VoiceOver" to output (item 1 of argv)',
+                 "-e", "end run",
+                 text],
+                capture_output=True, timeout=10)
+            if r.returncode == 0:
+                return
+        except Exception:
+            pass
+    try:
+        subprocess.run(["say", text], timeout=20)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------
+# finding coreaudiod
+# --------------------------------------------------------------------------
+
+def coreaudiod_pid():
+    """PID of the main coreaudiod, or None.
+
+    `pgrep -x coreaudiod` matches only the daemon itself, not the several
+    "Core Audio Driver (…)" helper processes that also run as _coreaudiod and
+    would otherwise make the PID comparison meaningless.
+    """
+    try:
+        r = subprocess.run(["pgrep", "-x", "coreaudiod"],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    pids = [int(x) for x in r.stdout.split() if x.strip().isdigit()]
+    return min(pids) if pids else None
+
+
+def wait_for_respawn(old_pid, timeout=RESPAWN_TIMEOUT):
+    """Wait for a coreaudiod whose PID differs from old_pid. Returns new PID."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        pid = coreaudiod_pid()
+        if pid is not None and pid != old_pid:
+            return pid
+        time.sleep(RESPAWN_POLL)
+    return None
+
+
+def audio_apps_running():
+    """Names of running audio applications, from one `ps` rather than N pgreps."""
+    try:
+        r = subprocess.run(["ps", "-Ao", "comm="],
+                           capture_output=True, text=True, timeout=5)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+
+    found = []
+    for line in r.stdout.splitlines():
+        name = os.path.basename(line.strip())
+        for app in AUDIO_APPS:
+            if name.startswith(app) and app not in found:
+                found.append(app)
+    return found
+
+
+# --------------------------------------------------------------------------
+# getting root
+# --------------------------------------------------------------------------
+
+def try_passwordless():
+    """Run the kill via `sudo -n`. True if sudo let it through without a prompt.
+
+    This is the fast path, so it really does run the command rather than only
+    testing whether it could. A False here costs nothing — the caller falls
+    straight through to the authorisation dialog.
+    """
+    try:
+        r = subprocess.run(["sudo", "-n"] + KILL_CMD,
+                           capture_output=True, text=True, timeout=15)
+    except Exception:
+        return False
+    # killall exits 1 when nothing matched, which still means sudo let us in.
+    if r.returncode == 0:
+        return True
+    err = (r.stderr or "")
+    if "password is required" in err or "may not run" in err or "sudo:" in err:
+        return False
+    return r.returncode == 1 and "No matching processes" in err
+
+
+def try_auth_dialog():
+    """Run the kill via the native macOS authorisation dialog.
+
+    Returns (ok, message). Cancelling the dialog is a normal outcome, not an
+    error worth shouting about, so it is reported distinctly.
+    """
+    script = 'do shell script "%s" with administrator privileges' % KILL_STR
+    try:
+        r = subprocess.run(["osascript", "-e", script],
+                           capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False, "the authorisation dialog timed out"
+    except Exception as e:
+        return False, "could not show the authorisation dialog: %s" % e
+
+    if r.returncode == 0:
+        return True, ""
+
+    err = (r.stderr or "").strip()
+    if "-128" in err or "User canceled" in err or "User cancelled" in err:
+        return False, "cancelled"
+    if "-60007" in err or "not allowed to send keystrokes" in err:
+        return False, "macOS refused the authorisation request"
+    return False, err.splitlines()[-1] if err else "authorisation failed"
+
+
+def passwordless_rule_installed():
+    """Is there a sudoers rule that lets this run with no password?
+
+    `sudo -n -l <cmd>` is no good for this: it answers "is this command
+    permitted by policy", not "may it run without a password", so on a machine
+    with a plain `(ALL) ALL` line it exits 0 for everything and reports "no
+    prompt" when there very much is one. Parse the NOPASSWD entries instead,
+    and treat anything unparseable as "there will be a prompt" — an unexpected
+    password prompt is a much smaller annoyance than a promised silent run
+    that stalls waiting for input nobody knows to give.
+    """
+    try:
+        r = subprocess.run(["sudo", "-n", "-l"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception:
+        return False
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        if "NOPASSWD:" not in line:
+            continue
+        for entry in line.split("NOPASSWD:", 1)[1].split(","):
+            # sudo -l backslash-escapes = and similar in its listing
+            entry = entry.strip().replace("\\", "")
+            if entry in ("ALL", "/usr/bin/killall", KILL_STR):
+                return True
+    return False
+
+
+def sudo_timestamp_valid():
+    """Is a recent `sudo` still cached, so this run happens not to be prompted?
+
+    Reported separately from the sudoers rule because it expires: a status
+    line saying "no prompt" that quietly becomes "one prompt" five minutes
+    later is worse than no status line at all.
+    """
+    try:
+        r = subprocess.run(["sudo", "-n", "true"],
+                           capture_output=True, timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+# --------------------------------------------------------------------------
+# the actual job
+# --------------------------------------------------------------------------
+
+def reset(quiet=False, dry_run=False, force_dialog=False, use_say=False,
+          timeout=RESPAWN_TIMEOUT):
+    old_pid = coreaudiod_pid()
+
+    if dry_run:
+        where = "running as PID %s" % old_pid if old_pid else "not running"
+        announce("Dry run. Core Audio is %s. Nothing was changed." % where,
+                 quiet, use_say)
+        return 0
+
+    if old_pid is None:
+        # Not fatal — launchd may already be mid-restart. Say so and carry on.
+        print("note: coreaudiod was not running before the reset")
+
+    how = None
+    if not force_dialog and try_passwordless():
+        how = "passwordless sudo"
+    else:
+        ok, msg = try_auth_dialog()
+        if not ok:
+            if msg == "cancelled":
+                announce("Core Audio reset cancelled. Nothing was changed.",
+                         quiet, use_say)
+                return 1
+            announce("Core Audio reset failed: %s" % msg, quiet, use_say)
+            return 1
+        how = "authorisation dialog"
+
+    new_pid = wait_for_respawn(old_pid, timeout)
+    if new_pid is None:
+        announce(
+            "Core Audio was stopped but has not come back yet. "
+            "Give it a moment, then run reset audio again.", quiet, use_say)
+        return 2
+
+    apps = audio_apps_running()
+    if len(apps) == 1:
+        extra = " %s is open, so check its audio device." % apps[0]
+    elif apps:
+        extra = " %s and %s are open, so check their audio devices." % (
+            ", ".join(apps[:-1]), apps[-1])
+    else:
+        extra = ""
+
+    announce("Core Audio reset. Done." + extra, quiet, use_say)
+    print("  old PID %s -> new PID %s  (via %s)" % (old_pid, new_pid, how))
+    return 0
+
+
+def status(quiet=False, use_say=False):
+    pid = coreaudiod_pid()
+    if pid is None:
+        announce("Core Audio is not running.", quiet, use_say)
+        return 1
+
+    lines = ["coreaudiod   PID %s" % pid]
+    try:
+        r = subprocess.run(["ps", "-o", "etime=,%cpu=", "-p", str(pid)],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            up, cpu = (r.stdout.split() + ["?", "?"])[:2]
+            lines.append("  up for     %s" % up)
+            lines.append("  cpu        %s%%" % cpu)
+    except Exception:
+        pass
+
+    if passwordless_rule_installed():
+        lines.append("  root via   passwordless sudo (no prompt)")
+    else:
+        lines.append("  root via   authorisation dialog (one prompt)")
+        if sudo_timestamp_valid():
+            lines.append("             — though a cached sudo session means "
+                         "the next run within a few minutes will not prompt")
+
+    apps = audio_apps_running()
+    lines.append("  audio apps " + (", ".join(apps) if apps else "none running"))
+
+    print("\n".join(lines))
+    announce("Core Audio is running.", quiet, use_say)
+    return 0
+
+
+INSTALL_HELP = """To make this run with no prompt at all, add a sudoers rule that permits
+exactly this one command and nothing else.
+
+This is a change to your machine's security configuration, so it is not done
+for you — run it yourself if and when you want it:
+
+  sudo tee /etc/sudoers.d/reset-audio <<'EOF'
+  %s ALL=(root) NOPASSWD: /usr/bin/killall -9 coreaudiod
+  EOF
+  sudo chmod 440 /etc/sudoers.d/reset-audio
+  sudo visudo -c
+
+What it does and does not grant: it allows that exact argument vector as root,
+and nothing else. It is not a blanket `killall` rule — `killall -9 anything`
+still asks for a password, because sudoers matches the full command line.
+
+The worst case if it were ever abused is a stopped audio daemon that launchd
+restarts a second later. That is a genuinely small blast radius, but it is
+still your call, not this script's. Without it you get one native
+authorisation dialog per reset, which is a perfectly good way to run this.
+
+To undo it:  sudo rm /etc/sudoers.d/reset-audio
+""" % getpass.getuser()
+
+
+EPILOG = """Run with no arguments to reset Core Audio.
+
+Exit codes:
+  0  reset (or the requested report) succeeded
+  1  cancelled, failed, or --status found Core Audio not running
+  2  Core Audio was stopped but had not come back within the timeout
+"""
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="reset-audio",
+        description="Restart macOS Core Audio, with spoken confirmation.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=EPILOG)
+    p.add_argument("--status", action="store_true",
+                   help="report whether Core Audio is running; change nothing")
+    p.add_argument("--dry-run", action="store_true",
+                   help="say what would happen; change nothing")
+    p.add_argument("--quiet", action="store_true",
+                   help="print only, do not speak")
+    p.add_argument("--say", action="store_true",
+                   help="speak with `say` even when VoiceOver is running")
+    p.add_argument("--dialog", action="store_true",
+                   help="always use the authorisation dialog, "
+                        "even if passwordless sudo is available")
+    p.add_argument("--timeout", type=float, default=RESPAWN_TIMEOUT,
+                   metavar="SECONDS",
+                   help="how long to wait for Core Audio to come back "
+                        "(default: %(default)s)")
+    p.add_argument("--install-help", action="store_true",
+                   help="show how to make this promptless")
+    p.add_argument("--version", action="version",
+                   version="reset-audio %s" % __version__)
+    args = p.parse_args()
+
+    if sys.platform != "darwin":
+        print("reset-audio is macOS only — Core Audio is a macOS thing.",
+              file=sys.stderr)
+        return 1
+    if args.install_help:
+        print(INSTALL_HELP)
+        return 0
+    if args.status:
+        return status(args.quiet, args.say)
+    return reset(quiet=args.quiet, dry_run=args.dry_run,
+                 force_dialog=args.dialog, use_say=args.say,
+                 timeout=args.timeout)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
