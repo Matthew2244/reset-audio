@@ -24,10 +24,11 @@ full reference — this is the short version.
 ./tools/check.sh
 ```
 
-Compiles, exercises the read-only entry points, confirms `--dry-run` leaves
-`coreaudiod` alone, and installs/uninstalls against a temporary prefix. About
-a second, changes nothing. An actual reset cannot be tested without stopping
-audio on this machine — CONTRIBUTING.md has the by-hand list for that.
+Thirty-odd checks, a couple of seconds, changes nothing. It also **sources
+`reset-audio`** and tests the internals directly — the `BASH_SOURCE[0]` guard
+at the bottom of the script is what makes that possible, so leave it there.
+Only `try_passwordless()` and `try_auth_dialog()` are out of reach, since they
+take root; CONTRIBUTING.md has the by-hand list for those.
 
 ## Facts that each cost an afternoon
 
@@ -43,10 +44,15 @@ audio on this machine — CONTRIBUTING.md has the by-hand list for that.
 - **`pgrep -x coreaudiod` is deliberate.** Without `-x` it also matches the
   several "Core Audio Driver (…)" helpers that run as `_coreaudiod`, which
   makes the PID comparison meaningless.
-- **Python 3.9 is the floor** — that is what the Command Line Tools ship. No
-  `match`, no `X | Y` annotations, standard library only.
-- **Pass text to `osascript` as `argv`, never inside the script source.** A
-  message containing a double quote otherwise ends the string early.
+- **bash 3.2 is the floor** — `/bin/bash` on macOS, pinned in the shebang. No
+  associative arrays, no `${var^^}`, no `mapfile`. A Homebrew bash 5 on your
+  PATH will accept things that fail for everyone else.
+- **Pass text to `osascript` and `say` as `argv`, after `--`.** Interpolating
+  it into the AppleScript source breaks on a double quote; omitting the `--`
+  loses any message starting with a dash to getopt. Both fail silently.
+- **No dependencies, on purpose.** It was Python until 1.1.0; a stock Mac has
+  no working `python3` until the Command Line Tools are installed, which is a
+  poor thing to discover when your audio is already broken.
 
 ## House style
 

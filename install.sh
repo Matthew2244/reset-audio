@@ -39,21 +39,11 @@ BIN_DIR="$PREFIX/bin"
 
 [ "$(uname -s)" = "Darwin" ] || { echo "reset-audio is macOS only." >&2; exit 1; }
 
-# The script is Python 3, stdlib only. macOS ships /usr/bin/python3 as a stub
-# that does nothing until the Command Line Tools are installed, so check that
-# it actually runs rather than merely that the file exists — the failure
-# otherwise turns up much later, as a dialog, when you press the button.
-if ! python3 -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
-    cat >&2 <<'EOF'
-python3 does not run on this Mac yet. It ships with the Xcode Command Line
-Tools, which are a free download and not the full Xcode:
-
-    xcode-select --install
-
-Then run ./install.sh again.
-EOF
-    exit 1
-fi
+# There is deliberately no dependency check here, because there are no
+# dependencies: reset-audio is bash and the tools every Mac already has. If
+# that ever stops being true, this is where the check goes — and the reason to
+# resist it is that the thing you reach for when audio is broken should not
+# itself have anything left to install.
 
 # ---------------------------------------------------------------------------
 # the command
@@ -105,7 +95,7 @@ EOF
     plist_set CFBundleName "Reset Audio" string
     plist_set CFBundleIdentifier "$BUNDLE_ID" string
     plist_set CFBundleShortVersionString \
-        "$(python3 "$REPO/reset-audio" --version | awk '{print $2}')" string
+        "$("$REPO/reset-audio" --version | awk '{print $2}')" string
 
     # osacompile declares every privacy usage string it can think of, so a
     # bare applet claims it might want your camera, contacts and HomeKit. This

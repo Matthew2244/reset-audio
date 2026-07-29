@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.0 — 2026-07-28
+
+**No dependencies.** Rewritten from Python to bash, so a stock Mac can run it
+with nothing installed first.
+
+The Python version needed `python3`, which macOS ships only as a stub until
+the Xcode Command Line Tools are installed. That put a download and a dialog
+between someone and a tool whose entire job is to be reachable at the moment
+their audio has broken. It is now `/bin/bash` — 3.2, the one macOS actually
+has — and commands already present on every Mac.
+
+Behaviour is unchanged: same flags, same exit codes, same spoken strings, byte
+for byte.
+
+- The script is now **sourceable**: sourcing it defines the functions and runs
+  nothing, so `tools/check.sh` tests the internals directly rather than only
+  through the command line. Everything except the two functions that take root
+  is now under test — the PID handling, the respawn wait, and the spoken
+  sentence at every app count.
+- Fixed while writing those tests: `announce()` passed its message to
+  `osascript` and `say` without a `--`, so any message beginning with a dash
+  would have been parsed as an option and lost silently. Nothing it says today
+  starts with one, which is exactly why it would have gone unnoticed.
+- The checks grew from 14 to 34, and now cover argument validation and exit
+  codes, and that the built app carries the script's version.
+
 ## 1.0.0 — 2026-07-28
 
 First public release. Previously a personal script; this is the same tool made

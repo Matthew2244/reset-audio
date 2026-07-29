@@ -7,29 +7,22 @@ on:
 
 jobs:
   check:
-    # macOS only, on purpose: install.sh calls osacompile and codesign, and
-    # the whole tool is Core Audio. There is nothing here a Linux runner could
+    # macOS only, on purpose: install.sh calls osacompile and codesign, and the
+    # whole tool is Core Audio. There is nothing here a Linux runner could
     # meaningfully check.
     runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show the interpreter
-        run: python3 --version
+      # The runner has a much newer bash on its PATH than a Mac does, and
+      # reset-audio is pinned to /bin/bash — which is still 3.2, and is what
+      # anyone installing this will actually run it under. Print both so a
+      # failure that only happens on one of them is not a mystery.
+      - name: Show the shells
+        run: |
+          echo "PATH bash:   $(bash --version | head -1)"
+          echo "/bin/bash:   $(/bin/bash --version | head -1)"
 
       - name: Run the checks
         run: ./tools/check.sh
-
-      # The runner ships a far newer python3 than a stock Mac does, so the
-      # checks above would happily pass on syntax that fails for anyone using
-      # the Command Line Tools interpreter. 3.9 is the documented floor, so
-      # compile against it explicitly rather than trusting the runner.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-
-      - name: Compile against the oldest supported interpreter
-        run: |
-          python --version
-          python -m py_compile reset-audio

@@ -53,18 +53,25 @@ that reintroduces a shell password prompt will not be merged.
 
 ## Some further guidance
 
-**Keep it to the standard library.** It has to run on a stock Mac with only
-the Command Line Tools installed, which today means Python 3.9. No `pip`, no
-virtualenv, no third-party imports, and no syntax newer than 3.9 — the
-structural pattern matching and the `X | Y` annotations you would reach for
-are both 3.10.
+**Add no dependencies.** It has to run on a Mac where nothing has been
+installed, because that is the state a lot of Macs are in and this is a tool
+you reach for when something is already wrong. `/bin/bash` and what ships with
+macOS, and that is the list.
 
-**Pass text to `osascript` as an argument, never inside the script source.**
-`announce()` builds an AppleScript handler and passes the message as `item 1
-of argv`. Interpolating it into the source instead means a message containing
-a double quote ends the string early, and the announcement either says the
-wrong thing or fails silently. Same reasoning applies anywhere else
-user-visible text meets AppleScript.
+**That means bash 3.2.** `/bin/bash` on macOS has been 3.2.57 for years and
+shows no sign of moving. So: no associative arrays, no `${var^^}`, no
+`mapfile`/`readarray`, no `&>>`. The shebang pins `/bin/bash` on purpose — if
+you develop with a Homebrew bash 5 on your PATH it will happily accept things
+that fail for everyone else, so run `./tools/check.sh` before you send
+anything, since it invokes the script the same way a user does.
+
+**Pass text to `osascript` and `say` as an argument after `--`, never inside
+the script source.** `announce()` builds an AppleScript handler and passes the
+message as `item 1 of argv`. Interpolating it into the source instead means a
+message containing a double quote ends the string early. And both commands
+parse their arguments with getopt, so without the `--` a message beginning
+with a dash is read as an option and the announcement is lost with an error
+nobody sees. Neither failure is loud; both are covered by the checks.
 
 **Say when something failed, in words that describe what to do next.** "Core
 Audio was stopped but has not come back yet. Give it a moment, then run reset
@@ -93,17 +100,30 @@ the shortest prefix that is not ambiguous with something else.
 ./tools/check.sh
 ```
 
-It compiles the script, exercises every read-only entry point, confirms
-`--dry-run` really does leave `coreaudiod` alone, parses the shell scripts,
-and then installs and uninstalls the whole thing against a temporary prefix so
-a broken installer is caught before someone clones it. About a second, and it
-changes nothing on your machine.
+Thirty-odd checks, a couple of seconds, and it changes nothing on your
+machine. It parses every script, exercises the read-only entry points,
+confirms bad input is rejected with the right exit code, confirms `--dry-run`
+really does leave `coreaudiod` alone, and installs and uninstalls the whole
+thing against a temporary prefix so a broken installer is caught before
+someone clones it.
+
+It then **sources `reset-audio` and tests the logic directly**. Sourcing the
+script defines its functions and runs nothing — that is what the
+`BASH_SOURCE[0]` guard at the bottom is for, so do not remove it. That gets
+the PID handling, the respawn wait and the spoken sentences under test
+without stopping the audio daemon to do it. If you add a function, add a case
+to `tools/check.sh` for it.
+
+The spoken strings are asserted exactly, at every count — no apps, one, two,
+three. That is on purpose: those strings are the user interface, so a change
+to the wording should be a deliberate edit to the check as well.
 
 ## What the checks cannot cover
 
-There is no way to test an actual reset without stopping the audio daemon on
-the machine running the test. So an actual reset is verified by hand, and a
-change that touches `reset()`, `try_auth_dialog()` or `try_passwordless()`
+Two functions actually take root — `try_passwordless()` and
+`try_auth_dialog()` — and there is no way to exercise those, or an actual
+reset, without stopping the audio daemon on the machine running the test. So
+those are verified by hand, and a change touching them or `reset_audio()`
 should be checked against this list before it is sent:
 
 - A plain `reset-audio` with no sudoers rule shows one native dialog, and

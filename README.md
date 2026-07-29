@@ -27,12 +27,15 @@ are sighted you may just like not opening Terminal.
 
 ## Requirements
 
-- macOS. Core Audio is a macOS thing; there is no sensible port of this.
-- Python 3, from the Xcode Command Line Tools (`xcode-select --install`).
-  Standard library only — nothing to `pip install`. If `python3 --version`
-  answers, you are ready.
-- VoiceOver is optional. With it running, announcements go through VoiceOver
-  itself; without it, they go through `say`.
+macOS, and nothing else.
+
+No Python, no Homebrew, no Command Line Tools, nothing to install first. It is
+`/bin/bash` and the tools every Mac already has, which is deliberate: the
+thing you reach for when audio is broken should not itself have anything left
+to install.
+
+VoiceOver is optional. With it running, announcements go through VoiceOver
+itself; without it, they go through `say`.
 
 ## Install
 
