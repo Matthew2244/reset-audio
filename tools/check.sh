@@ -148,12 +148,31 @@ eq "AUDIO_APPS has no duplicates" "" "$dupes"
 empty=$(printf '%s\n' "${AUDIO_APPS[@]}" | grep -c '^$')
 eq "AUDIO_APPS has no empty entries" "0" "$empty"
 
+bad=$(printf '%s\n' "${AUDIO_APPS[@]}" | grep -c '|.*|')
+eq "AUDIO_APPS entries have at most one |" "0" "$bad"
+
+# Matching, against a fake process list: spoken names replace executable
+# names, a duplicate process is named once, and an always-running background
+# helper is never mistaken for its app.
+ps() {
+    printf '%s\n' \
+        "/Applications/Ableton Live 12 Suite.app/Contents/MacOS/Live" \
+        "/Library/Application Support/Audio Hijack/Audio Hijack Scheduler.app/Contents/MacOS/Audio Hijack Scheduler" \
+        "/Applications/zoom.us.app/Contents/MacOS/zoom.us" \
+        "/Applications/REAPER.app/Contents/MacOS/REAPER" \
+        "/Applications/REAPER.app/Contents/MacOS/REAPER" \
+        "/Applications/Cubase 14.app/Contents/MacOS/Cubase 14"
+}
+eq "matching: spoken names, no dupes, helpers skipped" \
+   "Ableton Live|Zoom|REAPER|Cubase" "$(audio_apps_running | paste -sd '|' -)"
+unset -f ps
+
 # Whatever it reports as running must actually be in the list.
 strays=""
 while IFS= read -r a; do
     [ -z "$a" ] && continue
     found=0
-    for known in "${AUDIO_APPS[@]}"; do [ "$a" = "$known" ] && found=1 && break; done
+    for known in "${AUDIO_APPS[@]}"; do [ "$a" = "${known#*|}" ] && found=1 && break; done
     [ "$found" = "0" ] && strays="$strays $a"
 done < <(audio_apps_running)
 eq "audio_apps_running returns only known names" "" "$strays"

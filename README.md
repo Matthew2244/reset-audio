@@ -79,7 +79,8 @@ You will hear one of:
   run reset audio again."*
 
 The named-application part is there because several DAWs hold their device
-open across a restart and need reselecting afterwards. It recognises the
+open across a restart and need reselecting afterwards, and so do call and
+routing apps like Zoom, Teams and Loopback. It recognises the
 usual suspects and only mentions the ones actually running.
 
 ### Other things it does

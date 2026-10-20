@@ -43,7 +43,7 @@
 #
 # Nothing here touches the network.
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # The command, twice: as an argv array for `sudo`, and as the exact string that
 # goes into the AppleScript and into the sudoers rule. Both are constants —
@@ -64,15 +64,22 @@ RESPAWN_POLL=0.25
 # not the name in the Applications folder. Send a pull request if yours is
 # missing; CONTRIBUTING.md has the one command that tells you what to add.
 #
+# An entry is either a bare prefix, which is also what gets spoken, or
+# "prefix|Spoken name" for executables whose name would read badly aloud:
+# Ableton's is plain "Live", Zoom's is "zoom.us", Teams' is "MSTeams".
+#
 # The cost of a wrong entry here is one extra name in a spoken sentence, so
 # short prefixes are worth it even where they are slightly ambiguous.
 AUDIO_APPS=(
-    "REAPER" "Logic Pro" "MainStage" "GarageBand" "Pro Tools" "Live"
-    "Studio One" "Cubase" "Nuendo" "WaveLab" "FL Studio"
-    "Digital Performer" "BitwigStudio" "Ardour" "Mixbus" "LUNA" "Reason"
-    "Audacity" "TwistedWave" "Hindenburg" "Amadeus Pro" "Final Cut Pro"
-    "DaVinci Resolve" "Adobe Audition" "Adobe Premiere Pro" "ScreenFlow"
-    "Camtasia" "OBS" "Descript" "Dorico" "Sibelius"
+    "REAPER" "Logic Pro" "MainStage" "GarageBand" "Pro Tools"
+    "Live|Ableton Live" "Studio One" "Cubase" "Nuendo" "WaveLab" "FL Studio"
+    "Digital Performer" "BitwigStudio|Bitwig Studio" "Ardour" "Mixbus" "LUNA"
+    "Reason" "Audacity" "TwistedWave" "Hindenburg" "Amadeus Pro"
+    "Final Cut Pro" "DaVinci Resolve" "Adobe Audition" "Adobe Premiere Pro"
+    "ScreenFlow" "Camtasia" "OBS" "Descript" "Dorico" "Sibelius"
+    "mscore|MuseScore" "Gig Performer" "Pianoteq"
+    "Audio Hijack" "Loopback" "SoundSource" "Farrago"
+    "zoom.us|Zoom" "MSTeams|Microsoft Teams" "Discord" "Skype" "TeamTalk"
 )
 
 QUIET=0
@@ -159,22 +166,29 @@ wait_for_respawn() {
 
 # Names of running audio applications, one per line, from a single `ps` rather
 # than one pgrep per application.
+#
+# Background helpers are skipped before matching. Several of these apps leave
+# one running all the time — "Audio Hijack Scheduler" is always up whether
+# Audio Hijack is open or not — and a prefix match would otherwise name an app
+# that is not open, on every reset.
 audio_apps_running() {
-    local line name app found seen
-    found=""
+    local line name entry prefix spoken found
+    found="|"
     while IFS= read -r line; do
         name="${line##*/}"
-        for app in "${AUDIO_APPS[@]}"; do
+        case "$name" in
+            *" Helper"*|*Helper|*" Scheduler"|*" Agent"|*Extension|*" Service") continue ;;
+        esac
+        for entry in "${AUDIO_APPS[@]}"; do
+            prefix="${entry%%|*}"
+            spoken="${entry#*|}"
             case "$name" in
-                "$app"*)
+                "$prefix"*)
                     case "$found" in
-                        *"|$app|"*) seen=1 ;;
-                        *) seen=0 ;;
+                        *"|$spoken|"*) ;;
+                        *) found="$found$spoken|"
+                           printf '%s\n' "$spoken" ;;
                     esac
-                    if [ "$seen" = "0" ]; then
-                        found="$found|$app|"
-                        printf '%s\n' "$app"
-                    fi
                     ;;
             esac
         done

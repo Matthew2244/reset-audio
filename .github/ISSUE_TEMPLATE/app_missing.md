@@ -29,5 +29,5 @@ name in the Applications folder.
 recover on their own — worth saying which yours does, so the announcement
 stays honest.
 
-This is a two-line change to `AUDIO_APPS` in `reset-audio` and a good first
+This is a one-line change to `AUDIO_APPS` in `reset-audio` and a good first
 pull request if you fancy it. See CONTRIBUTING.md.

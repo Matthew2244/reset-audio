@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.0 — 2026-10-20
+
+More apps recognised after a reset, and names that sound right read aloud.
+
+- Now recognises Audio Hijack, Loopback, SoundSource, Farrago, Zoom,
+  Microsoft Teams, Discord, Skype, TeamTalk, Gig Performer, Pianoteq and
+  MuseScore. Calls and routing tools hold an audio device just like a DAW does.
+- An entry can carry a spoken name. Ableton Live was announced as just "Live",
+  since that is its executable name; it now says "Ableton Live". Same for
+  Zoom (`zoom.us`), Microsoft Teams (`MSTeams`), Bitwig Studio and MuseScore.
+- Background helpers are skipped before matching. Audio Hijack leaves its
+  Scheduler running all the time, so without this every reset would have said
+  Audio Hijack was open when it was not.
+- Two new checks: matching against a fake process list, and the spoken-name
+  format.
+
 ## 1.1.0 — 2026-07-28
 
 **No dependencies.** Rewritten from Python to bash, so a stock Mac can run it

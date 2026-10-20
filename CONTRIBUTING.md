@@ -94,6 +94,12 @@ ps -Ao comm= | grep -i yourapp
 Matching is by prefix, so `Cubase` covers `Cubase 13` and `Cubase 14`. Prefer
 the shortest prefix that is not ambiguous with something else.
 
+If the executable name would sound wrong read aloud, give the entry a spoken
+name after a `|`: `"zoom.us|Zoom"`, `"Live|Ableton Live"`. Background helpers
+(anything ending in Helper, Scheduler, Agent, Extension or Service) are skipped
+before matching, so an app that leaves one running all the time is only named
+when the app itself is open.
+
 ## Running the checks
 
 ```bash
