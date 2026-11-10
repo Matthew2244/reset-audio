@@ -39,6 +39,18 @@ itself; without it, they go through `say`.
 
 ## Install
 
+Paste this one line into Terminal. It needs no git and no download page: it
+puts Reset Audio in `~/reset-audio` and runs the installer.
+
+```bash
+mkdir -p ~/reset-audio && curl -fsSL https://github.com/Matthew2244/reset-audio/archive/refs/heads/main.tar.gz | tar xz -C ~/reset-audio --strip-components=1 && ~/reset-audio/install.sh
+```
+
+Keep the `~/reset-audio` folder; the command and the app run from it. Running
+the same line again updates it.
+
+Or with git:
+
 ```bash
 git clone https://github.com/Matthew2244/reset-audio.git
 cd reset-audio
